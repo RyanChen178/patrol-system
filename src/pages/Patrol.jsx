@@ -20,7 +20,8 @@ const Patrol = () => {
   const accuracyCircleRef = useRef(null)
   const polylineRef = useRef(null)
   const locationsRef = useRef([])
-  const watchIdRef = useRef(null)
+  const geolocationRef = useRef(null)
+  const watchIntervalRef = useRef(null)
   const timerRef = useRef(null)
   const lastRecordTimeRef = useRef(0)
 
@@ -39,23 +40,35 @@ const Patrol = () => {
 
     mapInstanceRef.current = map
 
-    // 使用浏览器原生API获取初始位置
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const { longitude, latitude } = position.coords
-          map.setCenter([longitude, latitude])
-        },
-        (error) => {
-          console.warn('初始定位失败:', error.message)
-        },
-        {
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 0
+    // 初始化高德定位插件（自动处理坐标系转换）
+    map.plugin('AMap.Geolocation', () => {
+      const geolocation = new window.AMap.Geolocation({
+        enableHighAccuracy: true,      // 启用高精度
+        timeout: 10000,                 // 10秒超时
+        needAddress: false,             // 不需要地址解析（提高速度）
+        extensions: 'base',             // 只返回基本信息
+        convert: true,                  // 自动转换为高德坐标（GCJ-02）
+        showButton: false,              // 不显示定位按钮
+        showMarker: false,              // 不显示定位标记
+        showCircle: false,              // 不显示精度圈
+        panToLocation: false,           // 不自动移动地图
+        zoomToAccuracy: false,          // 不自动调整缩放
+        useNative: true                 // 优先使用原生定位
+      })
+
+      geolocationRef.current = geolocation
+
+      // 获取初始位置
+      geolocation.getCurrentPosition((status, result) => {
+        if (status === 'complete') {
+          const { lng, lat } = result.position
+          map.setCenter([lng, lat])
+          console.log('✓ 初始定位成功，精度:', result.accuracy.toFixed(1), '米')
+        } else {
+          console.warn('初始定位失败:', result.message)
         }
-      )
-    }
+      })
+    })
 
     return () => {
       if (mapInstanceRef.current) {
@@ -80,88 +93,100 @@ const Patrol = () => {
     return R * c
   }
 
-  // 处理位置更新
-  const handlePositionUpdate = (position) => {
-    const { latitude, longitude, accuracy } = position.coords
-    const now = Date.now()
+  // 处理位置更新（使用高德定位结果）
+  const handlePositionUpdate = () => {
+    if (!geolocationRef.current) return
 
-    // 精度过滤：只接受精度小于50米的点
-    if (accuracy > 50) {
-      console.warn(`定位精度不足: ${accuracy.toFixed(1)}米，已跳过`)
-      setCurrentAccuracy(accuracy)
-      return
-    }
-
-    // 时间过滤：至少间隔5秒记录一次
-    if (now - lastRecordTimeRef.current < 5000) {
-      return
-    }
-
-    // 距离过滤：与上一个点距离至少2米才记录
-    if (locationsRef.current.length > 0) {
-      const lastLocation = locationsRef.current[locationsRef.current.length - 1]
-      const distance = calculateDistance(
-        lastLocation.lat,
-        lastLocation.lng,
-        latitude,
-        longitude
-      )
-
-      if (distance < 2) {
-        console.log(`移动距离不足: ${distance.toFixed(1)}米，已跳过`)
+    geolocationRef.current.getCurrentPosition((status, result) => {
+      if (status !== 'complete') {
+        console.warn('定位失败:', result.message)
+        setError('定位失败: ' + result.message)
         return
       }
-    }
 
-    // 记录位置点
-    const location = {
-      lng: longitude,
-      lat: latitude,
-      accuracy: accuracy,
-      timestamp: new Date().toISOString()
-    }
+      const { lng, lat } = result.position
+      const accuracy = result.accuracy || 999
+      const now = Date.now()
 
-    locationsRef.current.push(location)
-    setLocationCount(locationsRef.current.length)
-    setCurrentAccuracy(accuracy)
-    lastRecordTimeRef.current = now
+      // 更新当前精度显示（即使不记录也要显示）
+      setCurrentAccuracy(accuracy)
 
-    console.log(`✓ 记录位置点 #${locationsRef.current.length}, 精度: ${accuracy.toFixed(1)}米`)
+      // 精度过滤：只接受精度小于100米的点
+      if (accuracy > 100) {
+        console.warn(`定位精度不足: ${accuracy.toFixed(1)}米，已跳过`)
+        return
+      }
 
-    // 更新标记位置
-    if (markerRef.current) {
-      markerRef.current.setPosition([longitude, latitude])
-    }
+      // 时间过滤：至少间隔5秒记录一次
+      if (now - lastRecordTimeRef.current < 5000) {
+        return
+      }
 
-    // 更新精度圈
-    if (accuracyCircleRef.current) {
-      mapInstanceRef.current.remove(accuracyCircleRef.current)
-    }
-    accuracyCircleRef.current = new window.AMap.Circle({
-      map: mapInstanceRef.current,
-      center: [longitude, latitude],
-      radius: accuracy,
-      strokeColor: '#4299e1',
-      strokeWeight: 1,
-      strokeOpacity: 0.3,
-      fillColor: '#4299e1',
-      fillOpacity: 0.1
+      // 距离过滤：与上一个点距离至少2米才记录
+      if (locationsRef.current.length > 0) {
+        const lastLocation = locationsRef.current[locationsRef.current.length - 1]
+        const distance = calculateDistance(
+          lastLocation.lat,
+          lastLocation.lng,
+          lat,
+          lng
+        )
+
+        if (distance < 2) {
+          console.log(`移动距离不足: ${distance.toFixed(1)}米，已跳过`)
+          return
+        }
+      }
+
+      // 记录位置点
+      const location = {
+        lng: lng,
+        lat: lat,
+        accuracy: accuracy,
+        timestamp: new Date().toISOString()
+      }
+
+      locationsRef.current.push(location)
+      setLocationCount(locationsRef.current.length)
+      lastRecordTimeRef.current = now
+
+      console.log(`✓ 记录位置点 #${locationsRef.current.length}, 精度: ${accuracy.toFixed(1)}米`)
+
+      // 更新标记位置
+      if (markerRef.current) {
+        markerRef.current.setPosition([lng, lat])
+      }
+
+      // 更新精度圈
+      if (accuracyCircleRef.current) {
+        mapInstanceRef.current.remove(accuracyCircleRef.current)
+      }
+      accuracyCircleRef.current = new window.AMap.Circle({
+        map: mapInstanceRef.current,
+        center: [lng, lat],
+        radius: accuracy,
+        strokeColor: '#4299e1',
+        strokeWeight: 1,
+        strokeOpacity: 0.3,
+        fillColor: '#4299e1',
+        fillOpacity: 0.1
+      })
+
+      // 更新轨迹线
+      if (polylineRef.current && locationsRef.current.length >= 2) {
+        const path = locationsRef.current.map((loc) => [loc.lng, loc.lat])
+        polylineRef.current.setPath(path)
+      }
+
+      // 地图跟随
+      mapInstanceRef.current.setCenter([lng, lat])
     })
-
-    // 更新轨迹线
-    if (polylineRef.current && locationsRef.current.length >= 2) {
-      const path = locationsRef.current.map((loc) => [loc.lng, loc.lat])
-      polylineRef.current.setPath(path)
-    }
-
-    // 地图跟随
-    mapInstanceRef.current.setCenter([longitude, latitude])
   }
 
   // 开始巡逻
   const startPatrol = () => {
-    if (!navigator.geolocation) {
-      setError('您的设备不支持GPS定位')
+    if (!geolocationRef.current) {
+      setError('定位插件未初始化，请刷新页面重试')
       return
     }
 
@@ -205,36 +230,20 @@ const Patrol = () => {
       lineCap: 'round'
     })
 
-    // 使用watchPosition持续监听位置变化（高精度模式）
-    watchIdRef.current = navigator.geolocation.watchPosition(
-      handlePositionUpdate,
-      (error) => {
-        console.error('定位错误:', error.message)
-        switch (error.code) {
-          case error.PERMISSION_DENIED:
-            setError('请允许浏览器访问位置权限')
-            break
-          case error.POSITION_UNAVAILABLE:
-            setError('无法获取位置信息，请确保GPS已开启')
-            break
-          case error.TIMEOUT:
-            setError('定位超时，请检查网络连接')
-            break
-          default:
-            setError('定位失败: ' + error.message)
-        }
-      },
-      {
-        enableHighAccuracy: true, // 启用高精度模式（使用GPS）
-        timeout: 10000, // 10秒超时
-        maximumAge: 0 // 不使用缓存位置
-      }
-    )
+    // 立即获取第一个位置
+    handlePositionUpdate()
+
+    // 每2秒定时获取位置（高德会自动优化频率）
+    watchIntervalRef.current = setInterval(() => {
+      handlePositionUpdate()
+    }, 2000)
 
     // 启动计时器
     timerRef.current = setInterval(() => {
       setElapsedTime((prev) => prev + 1)
     }, 1000)
+
+    console.log('✓ 巡逻已开始，使用高德定位（GCJ-02坐标系）')
   }
 
   // 结束巡逻
@@ -254,9 +263,9 @@ const Patrol = () => {
 
     try {
       // 停止位置监听
-      if (watchIdRef.current !== null) {
-        navigator.geolocation.clearWatch(watchIdRef.current)
-        watchIdRef.current = null
+      if (watchIntervalRef.current) {
+        clearInterval(watchIntervalRef.current)
+        watchIntervalRef.current = null
       }
 
       // 停止计时器
@@ -337,8 +346,8 @@ const Patrol = () => {
   // 清理
   useEffect(() => {
     return () => {
-      if (watchIdRef.current !== null) {
-        navigator.geolocation.clearWatch(watchIdRef.current)
+      if (watchIntervalRef.current) {
+        clearInterval(watchIntervalRef.current)
       }
       if (timerRef.current) {
         clearInterval(timerRef.current)
@@ -396,8 +405,8 @@ const Patrol = () => {
             {currentAccuracy !== null && (
               <div className="text-xs mt-2 flex items-center">
                 <span className={`inline-block w-2 h-2 rounded-full mr-2 ${
-                  currentAccuracy < 20 ? 'bg-green-500' :
-                  currentAccuracy < 50 ? 'bg-yellow-500' : 'bg-red-500'
+                  currentAccuracy < 30 ? 'bg-green-500' :
+                  currentAccuracy < 100 ? 'bg-yellow-500' : 'bg-red-500'
                 }`}></span>
                 <span className="text-gray-500">
                   GPS精度: {currentAccuracy.toFixed(1)}米
@@ -405,9 +414,9 @@ const Patrol = () => {
               </div>
             )}
             <div className="text-xs text-gray-400 mt-2">
-              {currentAccuracy && currentAccuracy < 20 && '✓ 精度优秀'}
-              {currentAccuracy && currentAccuracy >= 20 && currentAccuracy < 50 && '✓ 精度良好'}
-              {currentAccuracy && currentAccuracy >= 50 && '⚠ 精度较差'}
+              {currentAccuracy && currentAccuracy < 30 && '✓ 精度优秀'}
+              {currentAccuracy && currentAccuracy >= 30 && currentAccuracy < 100 && '✓ 精度良好'}
+              {currentAccuracy && currentAccuracy >= 100 && '⚠ 精度较差'}
             </div>
           </div>
         )}
