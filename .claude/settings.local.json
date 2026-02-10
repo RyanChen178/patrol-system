@@ -4,7 +4,9 @@
       "Bash(npm create vite@latest . -- --template react)",
       "Bash(npm install)",
       "Bash(npm run build:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   }
 }
