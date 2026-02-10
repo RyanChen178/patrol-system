@@ -6,7 +6,8 @@
       "Bash(npm run build:*)",
       "Bash(wc:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(npm install:*)"
     ]
   }
 }

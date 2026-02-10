@@ -21,65 +21,65 @@ const Patrol = () => {
   const polylineRef = useRef(null)
   const locationsRef = useRef([])
   const geolocationRef = useRef(null)
-  const watchIntervalRef = useRef(null)
+  const watchIdRef = useRef(null)
   const timerRef = useRef(null)
   const lastRecordTimeRef = useRef(0)
 
-  // 初始化地图
+  // 初始化百度地图
   useEffect(() => {
-    if (!window.AMap) {
-      setError('高德地图加载失败')
+    if (!window.BMap || !window.BMapGL) {
+      // 尝试使用BMapGL，如果不存在则使用BMap
+      window.BMapGL = window.BMap
+    }
+
+    if (!window.BMapGL) {
+      setError('百度地图加载失败，请检查网络连接')
       return
     }
 
-    const map = new window.AMap.Map(mapRef.current, {
-      zoom: 17,
-      center: [116.397428, 39.90923],
-      mapStyle: 'amap://styles/normal'
-    })
+    // 创建地图实例
+    const map = new window.BMapGL.Map(mapRef.current)
+    const point = new window.BMapGL.Point(116.404, 39.915) // 默认中心点（北京）
+    map.centerAndZoom(point, 17)
+    map.enableScrollWheelZoom(true)
 
     mapInstanceRef.current = map
 
-    // 初始化高德定位插件（自动处理坐标系转换）
-    map.plugin('AMap.Geolocation', () => {
-      const geolocation = new window.AMap.Geolocation({
-        enableHighAccuracy: true,      // 启用高精度
-        timeout: 10000,                 // 10秒超时
-        needAddress: false,             // 不需要地址解析（提高速度）
-        extensions: 'base',             // 只返回基本信息
-        convert: true,                  // 自动转换为高德坐标（GCJ-02）
-        showButton: false,              // 不显示定位按钮
-        showMarker: false,              // 不显示定位标记
-        showCircle: false,              // 不显示精度圈
-        panToLocation: false,           // 不自动移动地图
-        zoomToAccuracy: false,          // 不自动调整缩放
-        useNative: true                 // 优先使用原生定位
-      })
+    // 创建定位控件
+    const geolocation = new window.BMapGL.Geolocation()
+    geolocationRef.current = geolocation
 
-      geolocationRef.current = geolocation
-
-      // 获取初始位置
-      geolocation.getCurrentPosition((status, result) => {
-        if (status === 'complete') {
-          const { lng, lat } = result.position
-          map.setCenter([lng, lat])
-          console.log('✓ 初始定位成功，精度:', result.accuracy.toFixed(1), '米')
-        } else {
-          console.warn('初始定位失败:', result.message)
-        }
-      })
+    // 获取初始位置
+    geolocation.getCurrentPosition((result) => {
+      if (geolocation.getStatus() === 0) {
+        // 定位成功
+        const point = result.point
+        map.centerAndZoom(point, 17)
+        console.log('✓ 初始定位成功:', point.lng, point.lat, '精度:', result.accuracy, '米')
+      } else {
+        console.warn('初始定位失败')
+      }
+    }, {
+      enableHighAccuracy: true
     })
 
     return () => {
       if (mapInstanceRef.current) {
-        mapInstanceRef.current.destroy()
+        mapInstanceRef.current = null
       }
     }
   }, [])
 
-  // 计算两点之间的距离（米）
+  // 计算两点之间的距离（米）- 使用百度提供的方法
   const calculateDistance = (lat1, lng1, lat2, lng2) => {
-    const R = 6371e3 // 地球半径（米）
+    if (window.BMapGL && window.BMapGL.Map) {
+      const point1 = new window.BMapGL.Point(lng1, lat1)
+      const point2 = new window.BMapGL.Point(lng2, lat2)
+      return mapInstanceRef.current.getDistance(point1, point2).toFixed(2)
+    }
+
+    // 备用算法
+    const R = 6371e3
     const φ1 = (lat1 * Math.PI) / 180
     const φ2 = (lat2 * Math.PI) / 180
     const Δφ = ((lat2 - lat1) * Math.PI) / 180
@@ -93,22 +93,25 @@ const Patrol = () => {
     return R * c
   }
 
-  // 处理位置更新（使用高德定位结果）
+  // 处理位置更新
   const handlePositionUpdate = () => {
     if (!geolocationRef.current) return
 
-    geolocationRef.current.getCurrentPosition((status, result) => {
-      if (status !== 'complete') {
-        console.warn('定位失败:', result.message)
-        setError('定位失败: ' + result.message)
+    geolocationRef.current.getCurrentPosition((result) => {
+      const geolocation = geolocationRef.current
+
+      if (geolocation.getStatus() !== 0) {
+        console.warn('定位失败')
         return
       }
 
-      const { lng, lat } = result.position
+      const point = result.point
+      const lng = point.lng
+      const lat = point.lat
       const accuracy = result.accuracy || 999
       const now = Date.now()
 
-      // 更新当前精度显示（即使不记录也要显示）
+      // 更新当前精度显示
       setCurrentAccuracy(accuracy)
 
       // 精度过滤：只接受精度小于100米的点
@@ -154,39 +157,45 @@ const Patrol = () => {
 
       // 更新标记位置
       if (markerRef.current) {
-        markerRef.current.setPosition([lng, lat])
+        markerRef.current.setPosition(new window.BMapGL.Point(lng, lat))
       }
 
       // 更新精度圈
       if (accuracyCircleRef.current) {
-        mapInstanceRef.current.remove(accuracyCircleRef.current)
+        mapInstanceRef.current.removeOverlay(accuracyCircleRef.current)
       }
-      accuracyCircleRef.current = new window.AMap.Circle({
-        map: mapInstanceRef.current,
-        center: [lng, lat],
-        radius: accuracy,
-        strokeColor: '#4299e1',
-        strokeWeight: 1,
-        strokeOpacity: 0.3,
-        fillColor: '#4299e1',
-        fillOpacity: 0.1
-      })
+      accuracyCircleRef.current = new window.BMapGL.Circle(
+        new window.BMapGL.Point(lng, lat),
+        accuracy,
+        {
+          strokeColor: '#4299e1',
+          strokeWeight: 1,
+          strokeOpacity: 0.3,
+          fillColor: '#4299e1',
+          fillOpacity: 0.1
+        }
+      )
+      mapInstanceRef.current.addOverlay(accuracyCircleRef.current)
 
       // 更新轨迹线
       if (polylineRef.current && locationsRef.current.length >= 2) {
-        const path = locationsRef.current.map((loc) => [loc.lng, loc.lat])
-        polylineRef.current.setPath(path)
+        const points = locationsRef.current.map((loc) => new window.BMapGL.Point(loc.lng, loc.lat))
+        polylineRef.current.setPath(points)
       }
 
       // 地图跟随
-      mapInstanceRef.current.setCenter([lng, lat])
+      mapInstanceRef.current.panTo(new window.BMapGL.Point(lng, lat))
+    }, {
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 0
     })
   }
 
   // 开始巡逻
   const startPatrol = () => {
     if (!geolocationRef.current) {
-      setError('定位插件未初始化，请刷新页面重试')
+      setError('定位功能未初始化，请刷新页面重试')
       return
     }
 
@@ -201,40 +210,32 @@ const Patrol = () => {
 
     // 清除旧的标记和轨迹
     if (markerRef.current) {
-      mapInstanceRef.current.remove(markerRef.current)
+      mapInstanceRef.current.removeOverlay(markerRef.current)
     }
     if (polylineRef.current) {
-      mapInstanceRef.current.remove(polylineRef.current)
+      mapInstanceRef.current.removeOverlay(polylineRef.current)
     }
     if (accuracyCircleRef.current) {
-      mapInstanceRef.current.remove(accuracyCircleRef.current)
+      mapInstanceRef.current.removeOverlay(accuracyCircleRef.current)
     }
 
     // 创建当前位置标记
-    markerRef.current = new window.AMap.Marker({
-      map: mapInstanceRef.current,
-      icon: new window.AMap.Icon({
-        size: new window.AMap.Size(25, 34),
-        image: '//a.amap.com/jsapi_demos/static/demo-center/icons/poi-marker-default.png',
-        imageSize: new window.AMap.Size(25, 34)
-      })
-    })
+    markerRef.current = new window.BMapGL.Marker(new window.BMapGL.Point(116.404, 39.915))
+    mapInstanceRef.current.addOverlay(markerRef.current)
 
     // 创建轨迹线
-    polylineRef.current = new window.AMap.Polyline({
-      map: mapInstanceRef.current,
+    polylineRef.current = new window.BMapGL.Polyline([], {
       strokeColor: '#3b82f6',
       strokeWeight: 6,
-      strokeOpacity: 0.9,
-      lineJoin: 'round',
-      lineCap: 'round'
+      strokeOpacity: 0.9
     })
+    mapInstanceRef.current.addOverlay(polylineRef.current)
 
     // 立即获取第一个位置
     handlePositionUpdate()
 
-    // 每2秒定时获取位置（高德会自动优化频率）
-    watchIntervalRef.current = setInterval(() => {
+    // 使用持续定位（每2秒获取一次）
+    watchIdRef.current = setInterval(() => {
       handlePositionUpdate()
     }, 2000)
 
@@ -243,7 +244,7 @@ const Patrol = () => {
       setElapsedTime((prev) => prev + 1)
     }, 1000)
 
-    console.log('✓ 巡逻已开始，使用高德定位（GCJ-02坐标系）')
+    console.log('✓ 巡逻已开始，使用百度地图定位（BD-09坐标系）')
   }
 
   // 结束巡逻
@@ -263,9 +264,9 @@ const Patrol = () => {
 
     try {
       // 停止位置监听
-      if (watchIntervalRef.current) {
-        clearInterval(watchIntervalRef.current)
-        watchIntervalRef.current = null
+      if (watchIdRef.current) {
+        clearInterval(watchIdRef.current)
+        watchIdRef.current = null
       }
 
       // 停止计时器
@@ -282,7 +283,7 @@ const Patrol = () => {
       for (let i = 1; i < locationsRef.current.length; i++) {
         const prev = locationsRef.current[i - 1]
         const curr = locationsRef.current[i]
-        totalDistance += calculateDistance(prev.lat, prev.lng, curr.lat, curr.lng)
+        totalDistance += parseFloat(calculateDistance(prev.lat, prev.lng, curr.lat, curr.lng))
       }
 
       // 保存到数据库
@@ -346,8 +347,8 @@ const Patrol = () => {
   // 清理
   useEffect(() => {
     return () => {
-      if (watchIntervalRef.current) {
-        clearInterval(watchIntervalRef.current)
+      if (watchIdRef.current) {
+        clearInterval(watchIdRef.current)
       }
       if (timerRef.current) {
         clearInterval(timerRef.current)
@@ -418,6 +419,7 @@ const Patrol = () => {
               {currentAccuracy && currentAccuracy >= 30 && currentAccuracy < 100 && '✓ 精度良好'}
               {currentAccuracy && currentAccuracy >= 100 && '⚠ 精度较差'}
             </div>
+            <div className="text-xs text-blue-500 mt-2">百度地图 BD-09</div>
           </div>
         )}
       </div>

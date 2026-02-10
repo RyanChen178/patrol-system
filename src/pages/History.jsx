@@ -16,24 +16,29 @@ const History = () => {
   const polylineRef = useRef(null)
   const markersRef = useRef([])
 
-  // 初始化地图
+  // 初始化百度地图
   useEffect(() => {
-    if (!window.AMap) {
-      setError('高德地图加载失败')
+    if (!window.BMap || !window.BMapGL) {
+      // 尝试使用BMapGL，如果不存在则使用BMap
+      window.BMapGL = window.BMap
+    }
+
+    if (!window.BMapGL) {
+      setError('百度地图加载失败')
       return
     }
 
-    const map = new window.AMap.Map(mapRef.current, {
-      zoom: 13,
-      center: [116.397428, 39.90923],
-      mapStyle: 'amap://styles/normal'
-    })
+    // 创建地图实例
+    const map = new window.BMapGL.Map(mapRef.current)
+    const point = new window.BMapGL.Point(116.404, 39.915) // 默认中心点（北京）
+    map.centerAndZoom(point, 13)
+    map.enableScrollWheelZoom(true)
 
     mapInstanceRef.current = map
 
     return () => {
       if (mapInstanceRef.current) {
-        mapInstanceRef.current.destroy()
+        mapInstanceRef.current = null
       }
     }
   }, [])
@@ -84,63 +89,64 @@ const History = () => {
 
     // 清除旧的标记和轨迹
     if (polylineRef.current) {
-      mapInstanceRef.current.remove(polylineRef.current)
+      mapInstanceRef.current.removeOverlay(polylineRef.current)
     }
     if (markersRef.current.length > 0) {
-      mapInstanceRef.current.remove(markersRef.current)
+      markersRef.current.forEach(marker => {
+        mapInstanceRef.current.removeOverlay(marker)
+      })
       markersRef.current = []
     }
 
     const locations = data.locations
-    const path = locations.map((loc) => [loc.lng, loc.lat])
+    const path = locations.map((loc) => new window.BMapGL.Point(loc.lng, loc.lat))
 
     // 绘制轨迹线
-    polylineRef.current = new window.AMap.Polyline({
-      map: mapInstanceRef.current,
-      path: path,
+    polylineRef.current = new window.BMapGL.Polyline(path, {
       strokeColor: '#3b82f6',
       strokeWeight: 6,
-      strokeOpacity: 0.8,
-      lineJoin: 'round',
-      lineCap: 'round'
+      strokeOpacity: 0.8
     })
+    mapInstanceRef.current.addOverlay(polylineRef.current)
 
     // 添加起点标记
-    const startMarker = new window.AMap.Marker({
-      map: mapInstanceRef.current,
-      position: [locations[0].lng, locations[0].lat],
-      icon: new window.AMap.Icon({
-        size: new window.AMap.Size(25, 34),
-        image: '//a.amap.com/jsapi_demos/static/demo-center/icons/poi-marker-red.png',
-        imageSize: new window.AMap.Size(25, 34)
-      }),
-      label: {
-        content: '起点',
-        offset: new window.AMap.Pixel(0, -35),
-        direction: 'top'
-      }
+    const startMarker = new window.BMapGL.Marker(new window.BMapGL.Point(locations[0].lng, locations[0].lat))
+    const startLabel = new window.BMapGL.Label('起点', {
+      offset: new window.BMapGL.Size(10, -20)
     })
+    startLabel.setStyle({
+      color: 'white',
+      backgroundColor: '#ef4444',
+      border: 'none',
+      borderRadius: '4px',
+      padding: '4px 8px',
+      fontSize: '12px',
+      fontWeight: 'bold'
+    })
+    startMarker.setLabel(startLabel)
+    mapInstanceRef.current.addOverlay(startMarker)
 
     // 添加终点标记
-    const endMarker = new window.AMap.Marker({
-      map: mapInstanceRef.current,
-      position: [locations[locations.length - 1].lng, locations[locations.length - 1].lat],
-      icon: new window.AMap.Icon({
-        size: new window.AMap.Size(25, 34),
-        image: '//a.amap.com/jsapi_demos/static/demo-center/icons/poi-marker-default.png',
-        imageSize: new window.AMap.Size(25, 34)
-      }),
-      label: {
-        content: '终点',
-        offset: new window.AMap.Pixel(0, -35),
-        direction: 'top'
-      }
+    const endMarker = new window.BMapGL.Marker(new window.BMapGL.Point(locations[locations.length - 1].lng, locations[locations.length - 1].lat))
+    const endLabel = new window.BMapGL.Label('终点', {
+      offset: new window.BMapGL.Size(10, -20)
     })
+    endLabel.setStyle({
+      color: 'white',
+      backgroundColor: '#10b981',
+      border: 'none',
+      borderRadius: '4px',
+      padding: '4px 8px',
+      fontSize: '12px',
+      fontWeight: 'bold'
+    })
+    endMarker.setLabel(endLabel)
+    mapInstanceRef.current.addOverlay(endMarker)
 
     markersRef.current = [startMarker, endMarker]
 
     // 自动调整视野
-    mapInstanceRef.current.setFitView()
+    mapInstanceRef.current.setViewport(path)
   }
 
   // 格式化时长
